@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+</head>
+<body>
+    <ul id="dragList">
+        <li draggable="true">Item 1</li>
+        <li draggable="true">Item 2</li>
+        <li draggable="true">Item 3</li>
+      </ul>
+</body>
+<style>
+    ul {
+  list-style-type: none;
+  padding: 0;
+}
+
+li {
+  background-color: lightblue;
+  margin: 5px;
+  padding: 5px;
+  cursor: pointer;
+}
+</style>
+
+<script>
+    const dragList = document.getElementById('dragList');
+const listItems = Array.from(dragList.children);
+
+let startIndex;
+let targetIndex;
+
+// 为每个可拖拽的列表项添加拖放事件监听器
+listItems.forEach((item, index) => {
+  item.addEventListener('dragstart', (e) => {
+    console.log(e,'dragstart');
+    
+    startIndex = index;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', '');
+  });
+
+  item.addEventListener('dragover', (e) => {
+    console.log(e,'dragover');
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  });
+
+  item.addEventListener('drop', (e) => {
+    console.log(e,'drop');
+
+    e.preventDefault();
+    targetIndex = Array.from(dragList.children).indexOf(e.currentTarget);
+    if (startIndex!== targetIndex) {
+      const itemToMove = listItems[startIndex];
+      if (startIndex < targetIndex) {
+        dragList.insertBefore(itemToMove, e.currentTarget.nextSibling);
+      } else {
+        dragList.insertBefore(itemToMove, e.currentTarget);
+      }
+    }
+  });
+});
+</script>
+</html>

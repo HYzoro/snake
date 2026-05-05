@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+</head>
+
+<style>
+    body{
+        width: 100vw;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center
+    }
+    canvas{
+        border: 1px solid black;
+    }
+</style>
+<body>
+
+    <canvas width="400px" height="400px" id="canvas"></canvas>
+    <div id="scouce">得分：0</div>
+
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const scouce = document.getElementById('scouce');
+        var gridSize = 20
+        var size = canvas.width / gridSize; //格子数量
+
+        var snick = [];
+        var Xstep = 0
+        var Ystep = 0
+        let food = {x:15, y:15}
+        let gameStore = false;
+        let score = 0;//分数
+        let gameInterval = null;
+
+        function init(){
+            snick = [
+                {x:10, y:15},
+                {x:9, y:15},
+                {x:8, y:15}
+            ]
+
+            Xstep = 1;//默认开始的时候蛇向右走
+            Ystep = 0
+            score = 0;
+            gameStore = true;
+
+            // 放食物
+            createFood();
+            // 画蛇和食物
+            draw();
+            // 开始游戏
+            update()
+
+
+            if (gameInterval) {
+                clearInterval(gameInterval)
+            }
+            gameInterval = setInterval(gameLoop, 100)
+        }
+
+        function gameLoop(){ 
+            if (!gameStore) {
+                return
+            }
+
+            update();
+            if (gameStore) {
+                draw();
+            }
+            
+        }
+
+        function update() { 
+            console.log(111);
+            
+            // 先更新头部
+            const heade = { x: snick[0].x + Xstep, y: snick[0].y + Ystep }
+
+            // 然后计算头部是否撞墙
+            if (heade.x < 0 || heade.x >= size || heade.y < 0 || heade.y >= size) {
+                gameover()
+                return 
+            }
+
+            // 在检查是否撞到自己
+            for (let i = 0; i < snick.length; i++) {
+                if (heade.x === snick[i].x && heade.y === snick[i].y) {
+                    gameover()
+                    return
+                }
+            }
+
+            // 增加新头部
+            snick.unshift(heade);
+
+            // 检查是否吃到食物
+            if (heade.x === food.x && heade.y === food.y) {
+                updateScore()
+                // 再次刷新食物
+                createFood();
+            }else{
+                // 没吃到食物的话就要删除尾巴
+                snick.pop();
+            }
+        }
+
+        // 画布操作
+        function draw() { 
+            ctx.fillStyle = "white";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            ctx.fillStyle = "green"
+            for (let i = 0; i < snick.length; i++) {
+                if (i === 0)  ctx.fillStyle = "#2e7d32"
+                else ctx.fillStyle = "#4caf50"
+
+                ctx.fillRect(snick[i].x*gridSize, snick[i].y*gridSize, gridSize - 2, gridSize - 2)
+                
+            }
+
+            ctx.fillStyle = "red"
+            ctx.fillRect(food.x*gridSize, food.y*gridSize, gridSize - 2, gridSize - 2)
+        }
+
+        function createFood() { 
+            let flog = true;
+            while (flog) { 
+                food.x = Math.floor(Math.random() * size);
+                food.y = Math.floor(Math.random() * size);
+
+                for (const part of snick) {
+                    if (part.x === food.x && part.y === food.y) {
+                        flog = true;
+                        break
+                    }else {
+                        flog = false;
+                    }
+                }
+            }
+        }
+
+        function gameover() { 
+            console.log("gameover");
+            
+            clearInterval(gameInterval);
+            gameStore = false;
+            ctx.fillStyle = 'rgba(0,0,0,0.7)';
+            ctx.fillRect(0,0,canvas.width,canvas.height);
+
+            ctx.fillStyle = 'red';
+            ctx.font = '30px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText("游戏结束", canvas.width/2, canvas.height/2)
+            ctx.font = '20px Arial';
+            ctx.fillText("最终得分" + score, canvas.width/2, canvas.height/2+50)
+        }
+
+        function updateScore() {
+            score += 1;
+            scouce.innerHTML = "得分："+score;
+        }
+
+        document.addEventListener('keydown', keydown)
+        function keydown(e) {
+             console.log(e.keyCode);
+            if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].indexOf(e.code) != -1) {
+                e.preventDefault();
+            }
+
+            switch (e.keyCode) {
+                case 37:
+                case 65:
+                    if (Xstep !== 1) {
+                        Xstep = -1;
+                        Ystep = 0;
+                    }
+                    break;
+                case 38:
+                case 87:    
+                    if (Ystep !== 1) {
+                        Xstep = 0;
+                        Ystep = -1;
+                    }
+                    break;
+                case 39:
+                case 68:
+                    if (Xstep !== -1) {
+                        Xstep = 1;
+                        Ystep = 0;
+                    }
+                    break;
+                case 40:
+                case 83:
+                    if (Ystep !== -1) {
+                        Xstep = 0;
+                        Ystep = 1;
+                    }
+                    break;
+            
+                default:
+                    break;
+            }
+        }
+
+
+        init()
+    </script>
+    
+</body>
+</html>

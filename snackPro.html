@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>超级贪吃蛇 Pro</title>
+</head>
+
+<style>
+    body {
+        width: 100vw;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        background-color: #2c3e50; /* 页面背景深色 */
+        font-family: 'Arial', sans-serif;
+        color: white;
+        margin: 0;
+        overflow: hidden; /* 防止地图扩大时出现滚动条 */
+    }
+
+    .game-container {
+        position: relative;
+        box-shadow: 0 0 20px rgba(0,0,0,0.5);
+        transition: all 0.5s ease; /* 平滑过渡地图大小变化 */
+    }
+
+    canvas {
+        border: 4px solid #34495e;
+        background-color: #ecf0f1; /* 画布默认背景，会被JS覆盖 */
+        display: block;
+    }
+
+    .ui-panel {
+        width: 100%; /* 适应动态宽度 */
+        max-width: 600px;
+        display: flex;
+        justify-content: space-between;
+        margin-top: 10px;
+        font-size: 18px;
+        font-weight: bold;
+        padding: 0 20px;
+        box-sizing: border-box;
+    }
+
+    .status-bar {
+        width: 100%;
+        max-width: 600px;
+        height: 20px;
+        margin-bottom: 5px;
+        color: #f1c40f;
+        font-size: 14px;
+        text-align: center;
+    }
+
+    /* 简单的按键提示 */
+    .controls-hint {
+        margin-top: 15px;
+        font-size: 12px;
+        color: #bdc3c7;
+        text-align: center;
+    }
+    
+    /* 破纪录闪烁动画类 */
+    .record-flash {
+        animation: borderFlash 0.5s infinite alternate;
+    }
+
+    @keyframes borderFlash {
+        from { border-color: #34495e; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+        to { border-color: #f1c40f; box-shadow: 0 0 30px #f1c40f; }
+    }
+</style>
+<body>
+
+    <div class="status-bar" id="statusBar"></div>
+
+    <div class="game-container" id="gameContainer">
+        <canvas width="400px" height="400px" id="canvas"></canvas>
+    </div>
+
+    <div class="ui-panel">
+        <div id="scoreBoard">得分: 0</div>
+        <div id="highScoreBoard">最高分: 0</div>
+    </div>
+
+    <div class="controls-hint">
+        WASD / 方向键移动 | Shift 加速 | P / Space 暂停
+    </div>
+
+    <script>
+        // --- DOM 元素获取 ---
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const scoreEl = document.getElementById('scoreBoard');
+        const highScoreEl = document.getElementById('highScoreBoard');
+        const statusBar = document.getElementById('statusBar');
+        const gameContainer = document.getElementById('gameContainer');
+
+        // --- 游戏配置常量 ---
+        const GRID_SIZE = 20; // 每个网格的大小(像素)
+        let CANVAS_SIZE = 400; // 画布初始大小，随等级变化
+        let GRID_COUNT = CANVAS_SIZE / GRID_SIZE; // 网格数量
+        
+        // --- 游戏状态变量 ---
+        let snake = []; // 蛇身数组，每个元素为 {x, y}
+        let velocity = { x: 0, y: 0 }; // 当前移动方向
+        let food = { x: 15, y: 15, type: 'normal' }; // 食物对象，type决定效果
+        let obstacles = []; // 障碍物数组
+        
+        let score = 0; // 当前得分
+        let highScore = localStorage.getItem('snakeHighScore') || 0; // 历史最高分
+        highScoreEl.innerText = `最高分: ${highScore}`;
+
+        let isGameRunning = false; // 游戏是否进行中
+        let isPaused = false; // 是否暂停
+        let gameLoopId = null; // 定时器ID
+        
+        // 速度控制
+        let baseSpeed = 150; // 初始移动间隔(毫秒)
+        let currentSpeed = baseSpeed; // 当前移动间隔
+        let isAccelerating = false; // 是否按住加速键
+
+        // 特效与道具状态
+        let particles = []; // 粒子特效数组
+        let activeEffects = {
+            wallHack: 0, // 穿墙剩余时间 (毫秒)
+            shrink: 0,   // 缩小剩余时间
+            grow: 0      // 变大/高分剩余时间
+        };
+
+        // 新增状态变量
+        let lastFoodType = 'normal'; // 记录最后吃到的食物类型，用于改变蛇身颜色
+        let mapLevel = 0; // 地图等级，每30分升一级
+        let isNewRecord = false; // 本局是否打破纪录
+        let celebrationTimer = 0; // 破纪录闪烁计时器
+
+        // 新增：输入缓冲队列，防止快速按键导致掉头自杀，并支持预输入
+        // 队列存储待执行的速度向量，最大长度为2
+        let inputQueue = []; 
+
+        // --- 初始化函数 ---
+        function init() {
+            // 重置地图大小
+            mapLevel = 0;
+            CANVAS_SIZE = 400;
+            updateCanvasSize();
+            
+            // 重置蛇的位置（居中）
+            let startX = Math.floor(GRID_COUNT / 2);
+            let startY = Math.floor(GRID_COUNT / 2);
+            snake = [
+                { x: startX, y: startY },
+                { x: startX - 1, y: startY },
+                { x: startX - 2, y: startY }
+            ];
+            
+            velocity = { x: 1, y: 0 }; // 初始向右
+            inputQueue = []; // 清空输入队列
+            score = 0;
+            obstacles = [];
+            particles = [];
+            activeEffects = { wallHack: 0, shrink: 0, grow: 0 };
+            lastFoodType = 'normal';
+            isNewRecord = false;
+            celebrationTimer = 0;
+            
+            // 移除可能的闪烁类
+            gameContainer.classList.remove('record-flash');
+            
+            updateScore(0);
+            createFood();
+            isGameRunning = true;
+            isPaused = false;
+            
+            // 启动循环
+            if (gameLoopId) clearTimeout(gameLoopId);
+            gameLoop();
+        }
+
+        // --- 更新画布尺寸 ---
+        function updateCanvasSize() {
+            canvas.width = CANVAS_SIZE;
+            canvas.height = CANVAS_SIZE;
+            GRID_COUNT = CANVAS_SIZE / GRID_SIZE;
+            // 更新UI面板宽度以匹配
+        }
+
+        // --- 核心游戏循环 ---
+        function gameLoop() {
+            if (!isGameRunning) return;
+
+            // 修复暂停逻辑：暂停时完全静止，不更新特效，不更新逻辑
+            if (isPaused) {
+                drawPauseScreen();
+                // 暂停时使用固定短延迟轮询，避免占用过多资源，同时能快速响应取消暂停
+                gameLoopId = setTimeout(gameLoop, 100);
+                return;
+            }
+
+            update();
+            draw();
+            
+            // 计算下一帧的时间，如果按住Shift则加速
+            let delay = currentSpeed;
+            if (isAccelerating) delay = Math.max(50, currentSpeed / 2); // 加速最快50ms
+
+            // 处理特效倒计时
+            handleEffects();
+
+            gameLoopId = setTimeout(gameLoop, delay);
+        }
+
+        // --- 逻辑更新 ---
+        function update() {
+            // 从输入队列中获取下一个合法的方向
+            if (inputQueue.length > 0) {
+                const nextDir = inputQueue.shift(); // 取出队列第一个指令
+                
+                // 双重检查：防止队列中的指令在当前帧已经变得非法（虽然概率极低）
+                // 检查新方向与当前方向是否相反
+                if (nextDir.x + velocity.x !== 0 || nextDir.y + velocity.y !== 0) {
+                    velocity = nextDir;
+                } else if (snake.length > 1) {
+                    // 如果队列里的指令也是掉头（极端情况），则忽略，保持原方向
+                    // 也可以选择继续尝试队列中的下一个，但通常丢弃更安全
+                }
+            }
+
+            // 1. 计算新头部位置
+            const head = { x: snake[0].x + velocity.x, y: snake[0].y + velocity.y };
+
+            // 2. 碰撞检测 - 墙壁
+            if (activeEffects.wallHack > 0) {
+                // 穿墙模式：环绕处理
+                if (head.x < 0) head.x = GRID_COUNT - 1;
+                if (head.x >= GRID_COUNT) head.x = 0;
+                if (head.y < 0) head.y = GRID_COUNT - 1;
+                if (head.y >= GRID_COUNT) head.y = 0;
+            } else {
+                // 普通模式：撞墙死亡
+                if (head.x < 0 || head.x >= GRID_COUNT || head.y < 0 || head.y >= GRID_COUNT) {
+                    gameOver();
+                    return;
+                }
+            }
+
+            // 3. 碰撞检测 - 自身
+            for (let i = 0; i < snake.length; i++) {
+                if (head.x === snake[i].x && head.y === snake[i].y) {
+                    // 为了游戏平衡，穿墙不免疫自撞
+                    gameOver();
+                    return;
+                }
+            }
+
+            // 4. 碰撞检测 - 障碍物
+            for (let obs of obstacles) {
+                if (head.x === obs.x && head.y === obs.y) {
+                    gameOver();
+                    return;
+                }
+            }
+
+            // 5. 移动蛇
+            snake.unshift(head); // 加头
+
+            // 6. 吃食物检测
+            if (head.x === food.x && head.y === food.y) {
+                handleEatFood();
+            } else {
+                snake.pop(); // 没吃到去尾
+            }
+
+            
+            // 8. 更新破纪录闪烁计时
+            if (isNewRecord && celebrationTimer > 0) {
+                celebrationTimer -= (isAccelerating ? Math.max(50, currentSpeed / 2) : currentSpeed);
+                if (celebrationTimer <= 0) {
+                    gameContainer.classList.remove('record-flash');
+                }
+            }
+        }
+
+        // --- 处理吃到食物 ---
+        function handleEatFood() {
+            // 记录最后吃到的食物类型
+            lastFoodType = food.type;
+
+
+            // 根据食物类型应用效果
+            let scoreAdd = 1;
+            if (food.type === 'gold') {
+                activeEffects.wallHack = 3000; // 3秒穿墙
+                scoreAdd = 2;
+            } else if (food.type === 'blue') {
+                activeEffects.shrink = 3000; // 3秒缩小
+                // 缩小：移除尾部3节，但不能少于3节
+                for(let k=0; k<3; k++) {
+                    if(snake.length > 3) snake.pop();
+                }
+                scoreAdd = 1;
+            } else if (food.type === 'purple') {
+                activeEffects.grow = 3000; // 3秒长大
+                // 变大/高分：额外加2分，并且蛇身额外增长2节
+                scoreAdd = 5;
+                snake.push({...snake[snake.length-1]});
+                snake.push({...snake[snake.length-1]});
+            }
+
+            updateScore(score + scoreAdd);
+            
+            // 检查地图升级 (每30分扩大一圈)
+            checkMapUpgrade();
+            
+            // 障碍物生成，超过30分之后，每增加5分生成一个障碍物
+            let targetObsCount = Math.max(0, Math.floor((score - 30) / 5));
+            if (obstacles.length < targetObsCount) {
+                createObstacle();
+            }
+
+            createFood();
+        }
+
+        // --- 检查地图升级 ---
+        function checkMapUpgrade() {
+            // 计算当前应该有的等级
+            let newLevel = Math.floor(score / 10);
+            if (newLevel > mapLevel) {
+                mapLevel = newLevel;
+                // 每次升级，宽高各增加 2 个网格 (40px)
+                CANVAS_SIZE += 40;
+                updateCanvasSize();
+                celebrationTimer = 1000
+                statusBar.innerText = "地图扩大！";
+                setTimeout(() => {
+                    celebrationTimer = 0
+                    statusBar.innerText = "";
+                }, 1000);
+            }
+        }
+
+        // --- 处理特效倒计时 ---
+        function handleEffects() {
+            // 简单处理：假设每次循环约等于 currentSpeed 毫秒
+            let frameTime = isAccelerating ? Math.max(50, currentSpeed / 2) : currentSpeed;
+
+            if (activeEffects.wallHack > 0) activeEffects.wallHack -= frameTime;
+            if (activeEffects.shrink > 0) activeEffects.shrink -= frameTime;
+            if (activeEffects.grow > 0) activeEffects.grow -= frameTime;
+
+            // 更新状态栏文字
+            let statusText = "";
+            if (activeEffects.wallHack > 0) {
+                statusText += `👻 穿墙 ${(activeEffects.wallHack/1000).toFixed(1)}s `;
+            }else if (activeEffects.shrink > 0) {
+                statusText += `缩小${(activeEffects.shrink/1000).toFixed(1)}s`;
+            } else if (activeEffects.grow > 0) {
+                statusText += `放大${(activeEffects.grow/1000).toFixed(1)}s`;
+            }
+            // 只有在没有其它重要提示时才显示默认空，或者保留文字直到消失
+            if (statusText === "" && celebrationTimer <= 0) {
+                 statusBar.innerText = "";
+            } else if (statusText !== "") {
+                 statusBar.innerText = statusText;
+            }
+        }
+
+        // --- 绘图渲染 ---
+        function draw() {
+            // 1. 绘制背景 (网格)
+            ctx.fillStyle = "#222";
+            ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+            
+            // 画网格线
+            ctx.strokeStyle = "#333";
+            ctx.lineWidth = 1;
+            for (let i = 0; i <= GRID_COUNT; i++) {
+                ctx.beginPath();
+                ctx.moveTo(i * GRID_SIZE, 0);
+                ctx.lineTo(i * GRID_SIZE, CANVAS_SIZE);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(0, i * GRID_SIZE);
+                ctx.lineTo(CANVAS_SIZE, i * GRID_SIZE);
+                ctx.stroke();
+            }
+
+            // 2. 绘制障碍物
+            ctx.fillStyle = "#7f8c8d";
+            for (let obs of obstacles) {
+                ctx.fillRect(obs.x * GRID_SIZE, obs.y * GRID_SIZE, GRID_SIZE - 2, GRID_SIZE - 2);
+                // 给障碍物画个X
+                ctx.strokeStyle = "#555";
+                ctx.beginPath();
+                ctx.moveTo(obs.x * GRID_SIZE, obs.y * GRID_SIZE);
+                ctx.lineTo((obs.x + 1) * GRID_SIZE, (obs.y + 1) * GRID_SIZE);
+                ctx.moveTo((obs.x + 1) * GRID_SIZE, obs.y * GRID_SIZE);
+                ctx.lineTo(obs.x * GRID_SIZE, (obs.y + 1) * GRID_SIZE);
+                ctx.stroke();
+            }
+
+            // 3. 绘制食物 (带呼吸效果)
+            let pulse = Math.sin(Date.now() / 200) * 2; // -2 到 2
+            let foodSize = GRID_SIZE - 4 + pulse;
+            let offset = (GRID_SIZE - foodSize) / 2;
+            
+            if (food.type === 'normal') ctx.fillStyle = "#e74c3c"; // 红
+            else if (food.type === 'gold') ctx.fillStyle = "#f1c40f"; // 金
+            else if (food.type === 'blue') ctx.fillStyle = "#3498db"; // 蓝
+            else if (food.type === 'purple') ctx.fillStyle = "#9b59b6"; // 紫
+            
+            ctx.fillRect(food.x * GRID_SIZE + offset, food.y * GRID_SIZE + offset, foodSize, foodSize);
+
+
+            // 4. 绘制蛇
+            // 穿墙快结束时闪烁
+            let isBlinking = activeEffects.wallHack > 0 && activeEffects.wallHack < 1000 && Math.floor(Date.now() / 100) % 2 === 0;
+            let isGhost = activeEffects.wallHack > 0 && !isBlinking;
+
+            // 确定蛇身基础颜色
+            let snakeBaseColor = "#2ecc71"; // 默认绿色
+            if (lastFoodType === 'normal') snakeBaseColor = "#2ecc71"; // 普通也是绿色
+            else if (lastFoodType === 'gold') snakeBaseColor = "#f1c40f"; // 金色
+            else if (lastFoodType === 'blue') snakeBaseColor = "#3498db"; // 蓝色
+            else if (lastFoodType === 'purple') snakeBaseColor = "#9b59b6"; // 紫色
+
+            for (let i = 0; i < snake.length; i++) {
+                let part = snake[i];
+                
+                if (isGhost) {
+                    ctx.globalAlpha = 0.4; // 半透明
+                } else {
+                    ctx.globalAlpha = 1.0;
+                }
+
+                if (i === 0) {
+                    // 蛇头 - 保持高亮或特定颜色，这里统一用基础色，或者稍微亮一点
+                    ctx.fillStyle = snakeBaseColor;
+                    // 如果是穿墙状态，蛇头也闪烁
+                    if (isBlinking) ctx.fillStyle = "#fff";
+
+                    ctx.fillRect(part.x * GRID_SIZE, part.y * GRID_SIZE, GRID_SIZE - 2, GRID_SIZE - 2);
+                    
+                    // 画眼睛
+                    ctx.fillStyle = "white";
+                    let eyeOffset = 4;
+                    let eyeSize = 4;
+                    // 根据方向调整眼睛位置
+                    let ex1, ey1, ex2, ey2;
+                    if (velocity.x === 1) { ex1=12; ey1=4; ex2=12; ey2=12; } // 右
+                    else if (velocity.x === -1) { ex1=4; ey1=4; ex2=4; ey2=12; } // 左
+                    else if (velocity.y === -1) { ex1=4; ey1=4; ex2=12; ey2=4; } // 上
+                    else { ex1=4; ey1=12; ex2=12; ey2=12; } // 下 (默认)
+
+                    ctx.fillRect(part.x * GRID_SIZE + ex1, part.y * GRID_SIZE + ey1, eyeSize, eyeSize);
+                    ctx.fillRect(part.x * GRID_SIZE + ex2, part.y * GRID_SIZE + ey2, eyeSize, eyeSize);
+
+                } else {
+                    // 蛇身 - 使用渐变色或统一颜色
+                    // 这里使用基于基础色的渐变，让蛇身有层次感
+                    ctx.fillStyle = snakeBaseColor;
+                    
+                    // 简单的变暗处理模拟渐变
+                    if (lastFoodType === 'normal' || lastFoodType === 'purple') {
+                         let greenVal = Math.max(100, 200 - i * 5);
+                         // 只对默认绿色做精细渐变，其他颜色做统一色块或简单变暗
+                         if (snakeBaseColor === "#2ecc71") {
+                             ctx.fillStyle = `rgb(46, ${greenVal}, 113)`;
+                         } else {
+                             // 其他颜色稍微变暗一点作为身体
+                             ctx.globalAlpha = 0.8; 
+                         }
+                    }
+                    
+                    ctx.fillRect(part.x * GRID_SIZE, part.y * GRID_SIZE, GRID_SIZE - 2, GRID_SIZE - 2);
+                    ctx.globalAlpha = isGhost ? 0.4 : 1.0; // 恢复透明度设置
+                }
+            }
+            ctx.globalAlpha = 1.0; // 恢复透明度
+
+        }
+
+        // --- 绘制暂停画面 ---
+        function drawPauseScreen() {
+            // 这里只需要盖一层蒙版
+            ctx.fillStyle = 'rgba(0,0,0,0.3)';
+            ctx.fillRect(0,0,CANVAS_SIZE, CANVAS_SIZE);
+            ctx.fillStyle = 'white';
+            ctx.font = '30px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText("已暂停", CANVAS_SIZE/2, CANVAS_SIZE/2);
+        }
+
+        // --- 辅助功能 ---
+
+        // 创建食物
+        function createFood() {
+            let valid = false;
+            while (!valid) {
+                food.x = Math.floor(Math.random() * GRID_COUNT);
+                food.y = Math.floor(Math.random() * GRID_COUNT);
+                
+                // 随机类型: 80% 普通, 5% 金, 5% 蓝, 10% 紫
+                let rand = Math.random();
+                if (rand < 0.8) food.type = 'normal';
+                else if (rand < 0.85) food.type = 'gold';
+                else if (rand < 0.90) food.type = 'blue';
+                else food.type = 'purple';
+
+                valid = true;
+                // 检查是否在蛇身上
+                for (let part of snake) {
+                    if (part.x === food.x && part.y === food.y) valid = false;
+                }
+                // 检查是否在障碍物上
+                for (let obs of obstacles) {
+                    if (obs.x === food.x && obs.y === food.y) valid = false;
+                }
+            }
+        }
+
+        // 创建障碍物
+        function createObstacle() {
+            let valid = false;
+            let obs = {};
+            while (!valid) {
+                obs.x = Math.floor(Math.random() * GRID_COUNT);
+                obs.y = Math.floor(Math.random() * GRID_COUNT);
+                valid = true;
+                // 不能生成在蛇身上
+                for (let part of snake) {
+                    if (part.x === obs.x && part.y === obs.y) valid = false;
+                }
+                // 不能生成在食物上
+                if (food.x === obs.x && food.y === obs.y) valid = false;
+                // 不能生成在其他障碍物上
+                for (let o of obstacles) {
+                    if (o.x === obs.x && o.y === obs.y) valid = false;
+                }
+                // 最好离蛇头远一点，避免瞬间死亡
+                let dist = Math.abs(obs.x - snake[0].x) + Math.abs(obs.y - snake[0].y);
+                if (dist < 5) valid = false;
+            }
+            obstacles.push(obs);
+        }
+
+        // 更新分数
+        function updateScore(newScore) {
+            score = newScore;
+            scoreEl.innerText = `得分: ${score}`;
+            
+            // 速度随分数增加而变快 (最快 50ms)
+            // 每得5分，速度加快 5ms
+            currentSpeed = Math.max(50, baseSpeed - Math.floor(score / 5) * 5);
+
+            if (score > highScore) {
+                // 打破纪录
+                if (!isNewRecord) {
+                    isNewRecord = true;
+                    celebrationTimer = 3000; // 闪烁3秒
+                    gameContainer.classList.add('record-flash');
+                }
+                highScore = score;
+                highScoreEl.innerText = `最高分: ${highScore}`;
+                localStorage.setItem('snakeHighScore', highScore);
+            }
+        }
+
+        // 游戏结束
+        function gameOver() {
+            isGameRunning = false;
+            clearTimeout(gameLoopId); // 确保循环停止
+            
+            
+            // 绘制 Game Over 画面
+            // 先重绘最后一帧背景，确保干净
+            ctx.fillStyle = "#222";
+            ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+            
+            
+            // 画文字，背景变暗
+            ctx.fillStyle = 'rgba(0,0,0,0.7)';
+            ctx.fillRect(0,0,CANVAS_SIZE, CANVAS_SIZE);
+            
+            ctx.fillStyle = '#e74c3c';
+            ctx.font = '40px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText("游戏结束", CANVAS_SIZE/2, CANVAS_SIZE/2 - 40);
+            
+            ctx.fillStyle = 'white';
+            ctx.font = '20px Arial';
+            ctx.fillText(`最终得分: ${score}`, CANVAS_SIZE/2, CANVAS_SIZE/2);
+            
+            if (isNewRecord) {
+                ctx.fillStyle = '#f1c40f';
+                ctx.font = '24px Arial';
+                ctx.fillText("🎉 新纪录！ 🎉", CANVAS_SIZE/2, CANVAS_SIZE/2 + 30);
+            }
+            
+            ctx.fillStyle = '#bdc3c7';
+            ctx.font = '16px Arial';
+            ctx.fillText("按 R 或 Enter 重新开始", CANVAS_SIZE/2, CANVAS_SIZE/2 + 70);
+
+        }
+
+        // --- 输入控制 ---
+        document.addEventListener('keydown', (e) => {
+            // 防止方向键滚动页面
+            if(["ArrowUp","ArrowDown","ArrowLeft","ArrowRight", " "].indexOf(e.code) > -1) {
+                e.preventDefault();
+            }
+
+            // 暂停控制
+            if (e.code === 'KeyP' || e.code === 'Space') {
+                if (isGameRunning) {
+                    isPaused = !isPaused;
+                    if (!isPaused) {
+                        // 取消暂停时，立即触发一次循环以减少延迟感（可选，这里保持原样由setTimeout驱动）
+                    }
+                }
+                return;
+            }
+
+            // 重启控制
+            if (!isGameRunning && (e.code === 'Enter' || e.code === 'KeyR')) {
+                init();
+                return;
+            }
+
+            if (!isGameRunning || isPaused) return;
+
+            // 加速控制
+            if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
+                isAccelerating = true;
+            }
+
+            // 方向控制 - 加入输入队列
+            let desiredDir = null;
+            switch (e.key) {
+                case 'ArrowUp':
+                case 'w':
+                case 'W':
+                    desiredDir = { x: 0, y: -1 };
+                    break;
+                case 'ArrowDown':
+                case 's':
+                case 'S':
+                    desiredDir = { x: 0, y: 1 };
+                    break;
+                case 'ArrowLeft':
+                case 'a':
+                case 'A':
+                    desiredDir = { x: -1, y: 0 };
+                    break;
+                case 'ArrowRight':
+                case 'd':
+                case 'D':
+                    desiredDir = { x: 1, y: 0 };
+                    break;
+            }
+
+            if (desiredDir) {
+                // 获取队列中最后一个指令，如果没有则使用当前速度
+                // 我们要基于“预期执行的最后一步”来判断是否掉头，而不是基于当前速度
+                // 这样能支持快速连续转弯（如：右->上->左）
+                const lastMove = inputQueue.length > 0 ? inputQueue[inputQueue.length - 1] : velocity;
+                
+                // 判断是否与前一个预期方向相反
+                const isOpposite = (desiredDir.x + lastMove.x === 0 && desiredDir.y + lastMove.y === 0);
+                
+                if (!isOpposite) {
+                    // 只有当队列不满时才加入，防止按键积压过多导致延迟
+                    if (inputQueue.length < 2) {
+                        inputQueue.push(desiredDir);
+                    }
+                }
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
+                isAccelerating = false;
+            }
+        });
+
+        // 启动游戏
+        init();
+
+    </script>
+</body>
+</html>
