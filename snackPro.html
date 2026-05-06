@@ -201,6 +201,9 @@
             }
 
             update();
+            if (!isGameRunning) {
+                return; 
+            }
             draw();
             
             // 计算下一帧的时间，如果按住Shift则加速
@@ -574,6 +577,10 @@
         function gameOver() {
             isGameRunning = false;
             clearTimeout(gameLoopId); // 确保循环停止
+
+            ctx.save();
+            ctx.globalAlpha = 1.0; 
+            ctx.setTransform(1, 0, 0, 1, 0, 0); // 重置变换矩阵
             
             
             // 绘制 Game Over 画面
@@ -605,6 +612,9 @@
             ctx.fillStyle = '#bdc3c7';
             ctx.font = '16px Arial';
             ctx.fillText("按 R 或 Enter 重新开始", CANVAS_SIZE/2, CANVAS_SIZE/2 + 70);
+
+            ctx.restore();
+            console.log("Game Over Displayed. Score:", score, "HighScore:", highScore, "IsNewRecord:", isNewRecord);
 
         }
 
