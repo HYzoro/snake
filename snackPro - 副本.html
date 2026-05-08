@@ -90,9 +90,6 @@
         WASD / 方向键移动 | Shift 加速 | P / Space 暂停
     </div>
 
-    <!-- 引入食物系统脚本 -->
-    <script src="foodSystem.js"></script>
-
     <script>
         // --- DOM 元素获取 ---
         const canvas = document.getElementById('canvas');
@@ -110,6 +107,7 @@
         // --- 游戏状态变量 ---
         let snake = []; // 蛇身数组，每个元素为 {x, y}
         let velocity = { x: 0, y: 0 }; // 当前移动方向
+        let food = { x: 15, y: 15, type: 'normal' }; // 食物对象，type决定效果
         let obstacles = []; // 障碍物数组
         
         let score = 0; // 当前得分
@@ -130,8 +128,7 @@
         let activeEffects = {
             wallHack: 0, // 穿墙剩余时间 (毫秒)
             shrink: 0,   // 缩小剩余时间
-            grow: 0,      // 变大/高分剩余时间
-            reverse: 0    // 反向控制剩余时间
+            grow: 0      // 变大/高分剩余时间
         };
 
         // 新增状态变量
@@ -143,9 +140,6 @@
         // 新增：输入缓冲队列，防止快速按键导致掉头自杀，并支持预输入
         // 队列存储待执行的速度向量，最大长度为2
         let inputQueue = []; 
-
-        // 新增：食物管理器实例
-        let foodManager = null;
 
         // --- 初始化函数 ---
         function init() {
@@ -168,7 +162,7 @@
             score = 0;
             obstacles = [];
             particles = [];
-            activeEffects = { wallHack: 0, shrink: 0, grow: 0, reverse: 0 };
+            activeEffects = { wallHack: 0, shrink: 0, grow: 0 };
             lastFoodType = 'normal';
             isNewRecord = false;
             celebrationTimer = 0;
@@ -176,11 +170,8 @@
             // 移除可能的闪烁类
             gameContainer.classList.remove('record-flash');
             
-            // 初始化食物管理器
-            foodManager = new FoodManager(GRID_COUNT);
-            foodManager.spawnNormalFood(snake, obstacles);
-
             updateScore(0);
+            createFood();
             isGameRunning = true;
             isPaused = false;
             
@@ -195,9 +186,6 @@
             canvas.height = CANVAS_SIZE;
             GRID_COUNT = CANVAS_SIZE / GRID_SIZE;
             // 更新UI面板宽度以匹配
-            if (foodManager) {
-                foodManager.setGridCount(GRID_COUNT);
-            }
         }
 
         // --- 核心游戏循环 ---
@@ -282,20 +270,11 @@
             // 5. 移动蛇
             snake.unshift(head); // 加头
 
-            // 6. 吃食物检测 (使用新的食物管理器)
-            let eatenFood = foodManager.checkCollision(head);
-            if (eatenFood) {
-                handleEatFood(eatenFood);
+            // 6. 吃食物检测
+            if (head.x === food.x && head.y === food.y) {
+                handleEatFood();
             } else {
                 snake.pop(); // 没吃到去尾
-            }
-
-            // 7. 更新食物状态 (主要是坏果的生成和过期)
-            if (foodManager) {
-                foodManager.updateBadFoods(snake, obstacles, score);
-                // 更新所有食物的计时器
-                let allFoods = foodManager.getAllFoods();
-                allFoods.forEach(f => f.update());
             }
 
             
@@ -309,110 +288,34 @@
         }
 
         // --- 处理吃到食物 ---
-        function handleEatFood(foodItem) {
+        function handleEatFood() {
             // 记录最后吃到的食物类型
-            lastFoodType = foodItem.type;
+            lastFoodType = food.type;
+
 
             // 根据食物类型应用效果
             let scoreAdd = 1;
-            
-            if (foodItem.type === 'normal') {
-                scoreAdd = 1;
-                // 吃普通果子时，尝试生成能力果实
-                if (foodManager) {
-                    foodManager.trySpawnPowerFood(snake, obstacles, score);
-                }
-            } 
-            else if (foodItem.type === 'gold') {
-                activeEffects.wallHack = 5000; // 5秒穿墙 (需求未指定具体时长，沿用之前或略长)
+            if (food.type === 'gold') {
+                activeEffects.wallHack = 3000; // 3秒穿墙
                 scoreAdd = 2;
-            } 
-            else if (foodItem.type === 'blue') {
-                activeEffects.shrink = 5000; // 5秒缩小
+            } else if (food.type === 'blue') {
+                activeEffects.shrink = 3000; // 3秒缩小
                 // 缩小：移除尾部3节，但不能少于3节
                 for(let k=0; k<3; k++) {
                     if(snake.length > 3) snake.pop();
                 }
                 scoreAdd = 1;
-            } 
-            else if (foodItem.type === 'purple') {
-                activeEffects.grow = 5000; // 5秒长大/双倍分数? 需求里purple是grow/double? 
-                // 之前的逻辑：purple是grow/double。这里假设purple是“双倍分数+长大”
-                // 需求描述：“紫色果实...得分翻倍”。这里我们实现得分翻倍效果持续一段时间，或者立即翻倍？
-                // 通常“得分翻倍”是Buff。这里简单处理：立即加5分，并触发Grow效果视觉
-                activeEffects.grow = 5000; 
-                scoreAdd = 5; // 高分
+            } else if (food.type === 'purple') {
+                activeEffects.grow = 3000; // 3秒长大
+                // 变大/高分：额外加2分，并且蛇身额外增长2节
+                scoreAdd = 5;
                 snake.push({...snake[snake.length-1]});
                 snake.push({...snake[snake.length-1]});
-            }
-            else if (foodItem.type === 'double') {
-                // 新增：双倍分数果实
-                activeEffects.grow = 5000; // 借用grow状态表示双倍分数Buff，或者新增状态
-                // 为了区分，我们可以在handleEffects里判断，或者简单点：接下来5秒内得分翻倍
-                // 这里简单实现：立即加2分，并给一个Buff标记
-                scoreAdd = 2; 
-                // 如果需要持续翻倍，需要修改updateScore逻辑。这里暂按立即加分处理，或延长Buff
-                activeEffects.grow = 5000; // 用grow代表Double Score Buff
-            }
-            // 修改: 区分两种坏果效果
-            else if (foodItem.type === 'bad') {
-                // 坏果效果1：头尾互换
-                // 1. 反转蛇身数组
-                snake.reverse();
-                // 2. 反转速度向量，以保持蛇在屏幕上的运动方向不变
-                // 例如：原来向右(1,0)，头在右。反转后，原来的尾巴(在左)变成了头。
-                // 如果速度不变，新头会向左移动，看起来像是蛇“掉头”了。
-                // 为了让它继续向右移动，我们需要将速度改为(-1,0)吗？
-                // 不，原来的头在右边，向右移动。反转后，新头在左边。
-                // 如果要保持“向右”的视觉趋势，新头应该向右移动。
-                // 但是蛇的身体连接关系变了。
-                // 简单做法：反转速度，这样蛇会沿着原来的路径“倒着走”，但因为头尾互换了，视觉上就是继续向前。
-                velocity.x = -velocity.x;
-                velocity.y = -velocity.y;
-                
-                // 清空输入队列，防止旧的输入指令导致立即掉头
-                inputQueue = [];
-                
-                scoreAdd = 0; // 不得分
-                statusBar.innerText = "⚠️ 头尾互换！";
-                setTimeout(() => { if(statusBar.innerText === "⚠️ 头尾互换！") statusBar.innerText = ""; }, 1000);
-            }
-            else if (foodItem.type === 'reverse_dir') {
-                // 坏果效果2：方向反转 (原 reverse 逻辑)
-                activeEffects.reverse = 3000; // 反向3秒
-                scoreAdd = 0; // 不得分
-                statusBar.innerText = "⚠️ 操作反向！";
-                setTimeout(() => { if(statusBar.innerText === "⚠️ 操作反向！") statusBar.innerText = ""; }, 1000);
-            }
-
-            // 如果有双倍分数Buff，加分翻倍
-            if (foodItem.type !== 'double' && activeEffects.grow > 0 && lastFoodType !== 'purple') {
-                 // 注意：这里的逻辑有点绕，因为上面用了grow代表purple的效果。
-                 // 让我们修正一下：purple只负责长大和5分。 double负责双倍。
-                 // 如果我们要实现“双倍分数”Buff，最好有个独立标志。
-                 // 鉴于复杂度，这里简化：Purple = 长大+5分。 Double = 双倍积分Buff 5秒。
-            }
-            
-            // 修正 Purple 和 Double 的逻辑区分
-            // 重新梳理：
-            // Gold: WallHack
-            // Blue: Shrink
-            // Purple: Grow (Snake gets longer) + High Score (5 pts)
-            // Double: Score Multiplier x2 for 5 seconds
-            
-            // 由于上面代码已经混合，我们做以下补救：
-            if (foodItem.type === 'purple') {
-                // 已经处理了长大和5分
-            } else if (foodItem.type === 'double') {
-                // 设置双倍分数标志
-                activeEffects.doubleScore = 5000;
-                scoreAdd *= 2;
             }
 
             updateScore(score + scoreAdd);
             
-            // 检查地图升级 (每30分扩大一圈) -> 需求改为每10分? 
-            // 需求：“每得到10分，地图就会向外扩展一圈”
+            // 检查地图升级 (每30分扩大一圈)
             checkMapUpgrade();
             
             // 障碍物生成，超过30分之后，每增加5分生成一个障碍物
@@ -421,27 +324,18 @@
                 createObstacle();
             }
 
-            // 如果普通食物被吃了，需要重新生成普通食物
-            if (foodItem.type === 'normal') {
-                foodManager.spawnNormalFood(snake, obstacles);
-            }
+            createFood();
         }
 
         // --- 检查地图升级 ---
         function checkMapUpgrade() {
-            // 需求：每得到10分，地图就会向外扩展一圈
+            // 计算当前应该有的等级
             let newLevel = Math.floor(score / 10);
             if (newLevel > mapLevel) {
                 mapLevel = newLevel;
                 // 每次升级，宽高各增加 2 个网格 (40px)
                 CANVAS_SIZE += 40;
                 updateCanvasSize();
-                
-                // 地图变大后，需要确保食物在新地图范围内，或者重新生成
-                if (foodManager) {
-                    foodManager.clearAndRespawn(snake, obstacles);
-                }
-
                 celebrationTimer = 1000
                 statusBar.innerText = "地图扩大！";
                 setTimeout(() => {
@@ -459,27 +353,16 @@
             if (activeEffects.wallHack > 0) activeEffects.wallHack -= frameTime;
             if (activeEffects.shrink > 0) activeEffects.shrink -= frameTime;
             if (activeEffects.grow > 0) activeEffects.grow -= frameTime;
-            if (activeEffects.doubleScore > 0) activeEffects.doubleScore -= frameTime;
-            if (activeEffects.reverse > 0) activeEffects.reverse -= frameTime;
 
             // 更新状态栏文字
             let statusText = "";
             if (activeEffects.wallHack > 0) {
                 statusText += `👻 穿墙 ${(activeEffects.wallHack/1000).toFixed(1)}s `;
+            }else if (activeEffects.shrink > 0) {
+                statusText += `缩小${(activeEffects.shrink/1000).toFixed(1)}s`;
+            } else if (activeEffects.grow > 0) {
+                statusText += `放大${(activeEffects.grow/1000).toFixed(1)}s`;
             }
-            if (activeEffects.shrink > 0) {
-                statusText += `| 缩小 ${(activeEffects.shrink/1000).toFixed(1)}s `;
-            } 
-            if (activeEffects.grow > 0) {
-                statusText += `| 放大 ${(activeEffects.grow/1000).toFixed(1)}s `;
-            }
-            if (activeEffects.doubleScore > 0) {
-                statusText += `| x2分 ${(activeEffects.doubleScore/1000).toFixed(1)}s `;
-            }
-            if (activeEffects.reverse > 0) {
-                statusText += `| ⚠️反向 ${(activeEffects.reverse/1000).toFixed(1)}s `;
-            }
-
             // 只有在没有其它重要提示时才显示默认空，或者保留文字直到消失
             if (statusText === "" && celebrationTimer <= 0) {
                  statusBar.innerText = "";
@@ -522,26 +405,17 @@
                 ctx.stroke();
             }
 
-            // 3. 绘制所有食物
-            let allFoods = foodManager ? foodManager.getAllFoods() : [];
-            for (let f of allFoods) {
-                let pulse = Math.sin(Date.now() / 200) * 2; // -2 到 2
-                let foodSize = GRID_SIZE - 4 + pulse;
-                let offset = (GRID_SIZE - foodSize) / 2;
-                
-                ctx.fillStyle = f.getColor();
-                
-                // 特殊形状或标识
-                if (f.type === 'bad') {
-                    // 坏果画个骷髅或者简单的暗色块
-                    ctx.fillRect(f.x * GRID_SIZE + offset, f.y * GRID_SIZE + offset, foodSize, foodSize);
-                    ctx.fillStyle = "black";
-                    ctx.font = "10px Arial";
-                    ctx.fillText("X", f.x * GRID_SIZE + 5, f.y * GRID_SIZE + 14);
-                } else {
-                    ctx.fillRect(f.x * GRID_SIZE + offset, f.y * GRID_SIZE + offset, foodSize, foodSize);
-                }
-            }
+            // 3. 绘制食物 (带呼吸效果)
+            let pulse = Math.sin(Date.now() / 200) * 2; // -2 到 2
+            let foodSize = GRID_SIZE - 4 + pulse;
+            let offset = (GRID_SIZE - foodSize) / 2;
+            
+            if (food.type === 'normal') ctx.fillStyle = "#e74c3c"; // 红
+            else if (food.type === 'gold') ctx.fillStyle = "#f1c40f"; // 金
+            else if (food.type === 'blue') ctx.fillStyle = "#3498db"; // 蓝
+            else if (food.type === 'purple') ctx.fillStyle = "#9b59b6"; // 紫
+            
+            ctx.fillRect(food.x * GRID_SIZE + offset, food.y * GRID_SIZE + offset, foodSize, foodSize);
 
 
             // 4. 绘制蛇
@@ -555,10 +429,6 @@
             else if (lastFoodType === 'gold') snakeBaseColor = "#f1c40f"; // 金色
             else if (lastFoodType === 'blue') snakeBaseColor = "#3498db"; // 蓝色
             else if (lastFoodType === 'purple') snakeBaseColor = "#9b59b6"; // 紫色
-            else if (lastFoodType === 'double') snakeBaseColor = "#e67e22"; // 橙色
-            // 修改: 区分两种坏果的颜色
-            else if (lastFoodType === 'bad') snakeBaseColor = "#5d4037"; // 暗褐色 (头尾互换)
-            else if (lastFoodType === 'reverse_dir') snakeBaseColor = "#8e44ad"; // 深紫色 (方向反转)
 
             for (let i = 0; i < snake.length; i++) {
                 let part = snake[i];
@@ -597,7 +467,7 @@
                     ctx.fillStyle = snakeBaseColor;
                     
                     // 简单的变暗处理模拟渐变
-                    if (['normal', 'purple', 'bad'].includes(lastFoodType)) {
+                    if (lastFoodType === 'normal' || lastFoodType === 'purple') {
                          let greenVal = Math.max(100, 200 - i * 5);
                          // 只对默认绿色做精细渐变，其他颜色做统一色块或简单变暗
                          if (snakeBaseColor === "#2ecc71") {
@@ -630,6 +500,32 @@
 
         // --- 辅助功能 ---
 
+        // 创建食物
+        function createFood() {
+            let valid = false;
+            while (!valid) {
+                food.x = Math.floor(Math.random() * GRID_COUNT);
+                food.y = Math.floor(Math.random() * GRID_COUNT);
+                
+                // 随机类型: 80% 普通, 5% 金, 5% 蓝, 10% 紫
+                let rand = Math.random();
+                if (rand < 0.8) food.type = 'normal';
+                else if (rand < 0.85) food.type = 'gold';
+                else if (rand < 0.90) food.type = 'blue';
+                else food.type = 'purple';
+
+                valid = true;
+                // 检查是否在蛇身上
+                for (let part of snake) {
+                    if (part.x === food.x && part.y === food.y) valid = false;
+                }
+                // 检查是否在障碍物上
+                for (let obs of obstacles) {
+                    if (obs.x === food.x && obs.y === food.y) valid = false;
+                }
+            }
+        }
+
         // 创建障碍物
         function createObstacle() {
             let valid = false;
@@ -643,10 +539,7 @@
                     if (part.x === obs.x && part.y === obs.y) valid = false;
                 }
                 // 不能生成在食物上
-                let allFoods = foodManager ? foodManager.getAllFoods() : [];
-                for (let f of allFoods) {
-                    if (f.x === obs.x && f.y === obs.y) valid = false;
-                }
+                if (food.x === obs.x && food.y === obs.y) valid = false;
                 // 不能生成在其他障碍物上
                 for (let o of obstacles) {
                     if (o.x === obs.x && o.y === obs.y) valid = false;
@@ -782,12 +675,6 @@
             }
 
             if (desiredDir) {
-                // 如果处于反向控制状态，反转输入方向
-                if (activeEffects.reverse > 0) {
-                    desiredDir.x = -desiredDir.x;
-                    desiredDir.y = -desiredDir.y;
-                }
-
                 // 获取队列中最后一个指令，如果没有则使用当前速度
                 // 我们要基于“预期执行的最后一步”来判断是否掉头，而不是基于当前速度
                 // 这样能支持快速连续转弯（如：右->上->左）
