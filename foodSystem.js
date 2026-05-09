@@ -1,24 +1,46 @@
+// --- 颜色配置常量 ---
+const FOOD_COLORS = {
+    'normal': '#e74c3c', // 红 - 普通食物
+    'gold': '#f1c40f',   // 金 - 穿墙
+    'blue': '#3498db',   // 蓝 - 缩小
+    'purple': '#b210f1', // 紫 - 长大双倍分数
+    'bad': '#5d4037',     // 暗褐色/深棕色 (头尾互换)
+    'reverse_dir': '#df07b0', // 深紫色 (方向反转)
+    'double': '#f39c12'  // 橙色 - 双倍分数
+};
+
+// --- 图片配置 ---
+const USE_FOOD_IMAGES = false; // 开启/关闭图片模式的开关
+let FOOD_IMAGES = {}; // 存储加载的图片对象
+
+// --- 初始化食物图片 ---
+// function loadFoodImages() {
+//     if (!USE_FOOD_IMAGES) return; // 如果未启用图片模式，则不加载图片
+    
+//     // 创建各种食物类型的图片对象
+//     const imageTypes = ['normal', 'gold', 'blue', 'purple', 'reverse_dir', 'double'];
+    
+//     imageTypes.forEach(type => {
+//         FOOD_IMAGES[type] = new Image();
+//         // 这里需要替换为您实际的图片路径
+//         FOOD_IMAGES[type].src = `img/${type}.png`; // 默认图片路径
+//     });
+// }
+
+// // 初始加载图片
+// loadFoodImages();
+
 // --- 食物系统定义 ---
 
 class FoodItem {
     constructor(x, y, type, duration) {
         this.x = x;
         this.y = y;
-        this.type = type; // 'normal', 'gold', 'blue', 'purple', 'bad'(swap), 'reverse_dir'(reverse controls)
-        this.duration = duration; // 毫秒，0表示永久(仅用于normal)
+        this.type = type; 
+        this.duration = duration; // 存在时间，0表示永久(仅用于normal)
         this.maxDuration = duration;
         this.createdAt = Date.now();
         this.isExpired = false;
-        
-        // 配置颜色
-        this.colors = {
-            'normal': '#e74c3c', // 红
-            'gold': '#f1c40f',   // 金
-            'blue': '#3498db',   // 蓝
-            'purple': '#9b59b6', // 紫
-            'bad': '#5d4037',     // 暗褐色/深棕色 (头尾互换)
-            'reverse_dir': '#8e44ad' // 深紫色 (方向反转)
-        };
     }
 
     update() {
@@ -30,7 +52,7 @@ class FoodItem {
     }
 
     getColor() {
-        return this.colors[this.type] || '#fff';
+        return FOOD_COLORS[this.type] || '#fff';
     }
 }
 
@@ -45,7 +67,7 @@ class FoodManager {
         this.MAX_POWER_FOODS = 5;
         this.MAX_BAD_FOODS = 5;
         
-        // 坏果刷新计时器ID，用于管理自动刷新
+        // 坏果刷新计时器ID
         this.badFoodTimers = []; 
     }
 
@@ -103,14 +125,11 @@ class FoodManager {
     trySpawnPowerFood(snake, obstacles, score) {
         if (this.powerFoods.length >= this.MAX_POWER_FOODS) return;
         
-        // 随机概率生成，这里简化为每次调用有一定概率，或者由外部控制
-        // 为了保持游戏节奏，我们可以在主循环中定期调用，或者在吃果子时调用
-        // 这里采用：每次吃普通果子时尝试生成一个能力果
         if (Math.random() > 0.3) return; // 30% 概率生成能力果
 
-        let types = ['gold', 'blue', 'purple', 'double']; // 新增 double
+        let types = ['gold', 'blue', 'purple', 'double']; 
         let type = types[Math.floor(Math.random() * types.length)];
-        let duration = 5000; // 能力果默认存在5秒
+        let duration = 5000; // 能力果存在5秒
 
         let pos = this.generatePosition(snake, obstacles, [this.normalFood, ...this.powerFoods, ...this.badFoods]);
         if (pos) {
@@ -120,10 +139,10 @@ class FoodManager {
 
     // 处理坏果逻辑
     updateBadFoods(snake, obstacles, score) {
-        // 1. 移除过期的坏果
+        // 移除过期的坏果
         this.badFoods = this.badFoods.filter(f => !f.isExpired);
 
-        // 2. 计算当前允许的最大坏果数量
+        // 计算当前允许的最大坏果数量
         let maxBadCount = 0;
         if (score >= 50) maxBadCount = 5;
         else if (score >= 40) maxBadCount = 3; 
@@ -159,7 +178,7 @@ class FoodManager {
         if (targetCount > 5) targetCount = 5;
         if (duration > 7000) duration = 7000;
 
-        // 3. 补充坏果直到达到目标数量 只在数量不足时生成新的
+        //  补充坏果直到达到目标数量 只在数量不足时生成新的
         while (this.badFoods.length < targetCount) {
             let pos = this.generatePosition(snake, obstacles, [this.normalFood, ...this.powerFoods, ...this.badFoods]);
             if (pos) {
@@ -183,14 +202,14 @@ class FoodManager {
 
     // 检查碰撞，返回吃到的食物对象，如果没吃到返回 null
     checkCollision(head) {
-        // 1. 检查普通食物
+        // 检查普通食物
         if (this.normalFood && head.x === this.normalFood.x && head.y === this.normalFood.y) {
             let f = this.normalFood;
-            this.spawnNormalFood([], []); // 临时参数，实际应在外部重新生成以确保不冲突，这里简化
+            this.spawnNormalFood([], []); 
             return f;
         }
 
-        // 2. 检查能力食物
+        //  检查能力食物
         for (let i = 0; i < this.powerFoods.length; i++) {
             let f = this.powerFoods[i];
             if (head.x === f.x && head.y === f.y) {
@@ -199,7 +218,7 @@ class FoodManager {
             }
         }
 
-        // 3. 检查坏果
+        //  检查坏果
         for (let i = 0; i < this.badFoods.length; i++) {
             let f = this.badFoods[i];
             if (head.x === f.x && head.y === f.y) {
@@ -211,12 +230,69 @@ class FoodManager {
         return null;
     }
     
-    // 当地图大小改变时，确保食物在范围内（可选，简单起见暂不处理越界，因为网格数变了坐标可能无效）
-    // 最好在 mapUpgrade 时重新生成所有食物
+    // 在 地图更新时重新生成所有食物
     clearAndRespawn(snake, obstacles) {
-        this.normalFood = null;
+        // 清除所有特殊食物的计时器
         this.powerFoods = [];
         this.badFoods = [];
+        
+        // 重新生成普通食物
         this.spawnNormalFood(snake, obstacles);
     }
 }
+
+// // 食物系统模块
+// class FoodSystem {
+//     constructor() {
+//         this.position = { x: 0, y: 0 };
+//         this.color = GameConfig.FOOD_COLOR;
+//         this.generateFood();
+//     }
+    
+//     /**
+//      * 生成新的食物位置
+//      * @param {Array} snakeBody - 蛇的身体坐标数组
+//      */
+//     generateFood(snakeBody = []) {
+//         let newPosition;
+//         let validPosition = false;
+        
+//         // 确保食物不会出现在蛇身上
+//         while (!validPosition) {
+//             newPosition = {
+//                 x: Utils.randomInt(0, GameConfig.GRID_COUNT_X - 1),
+//                 y: Utils.randomInt(0, GameConfig.GRID_COUNT_Y - 1)
+//             };
+            
+//             // 检查新位置是否与蛇身重合
+//             validPosition = true;
+//             for (const segment of snakeBody) {
+//                 if (Utils.isSamePosition(newPosition, segment)) {
+//                     validPosition = false;
+//                     break;
+//                 }
+//             }
+//         }
+        
+//         this.position = newPosition;
+//         // 随机改变食物颜色增加趣味性
+//         this.color = Utils.randomColor();
+//     }
+    
+//     /**
+//      * 检查蛇是否吃到食物
+//      * @param {Object} headPos - 蛇头位置
+//      * @returns {boolean} 是否吃到食物
+//      */
+//     checkCollision(headPos) {
+//         return Utils.isSamePosition(this.position, headPos);
+//     }
+    
+//     /**
+//      * 获取食物位置
+//      * @returns {Object} 食物位置 {x, y}
+//      */
+//     getPosition() {
+//         return this.position;
+//     }
+// }
